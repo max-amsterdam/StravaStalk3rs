@@ -1,7 +1,5 @@
 """
 This file contains the logic for scraping workout data from a given athlete's profile page on strava.com
-
-Some of the code, structure, and libraries used were inspired by this repo: https://github.com/oleksmaistrenko/strava-google-sheets
 """
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -9,26 +7,6 @@ import datetime
 import os
 import time
 import re
-
-count = 1
-
-def human_readable_time_to_machine(activity_date_day):
-    if activity_date_day == 'Today':
-        return datetime.date.today().strftime('%B %-d, %Y')
-    if activity_date_day == 'Yesterday':
-        return (datetime.date.today() - datetime.timedelta(days=1)).strftime('%B %-d, %Y')
-
-def parse_athlete_activity_info(athlete_info):
-    '''
-    get activity info from athlete selection
-    '''
-    activity_athlete = athlete_info.xpath(".//a[contains(@class, 'entry-athlete')]")[0].text.strip()
-    activity_distance = athlete_info.xpath(".//li[@title='Distance']")[0].text.strip()
-    try:
-        activity_elevation_gain = athlete_info.xpath(".//li[@title='Elev Gain']")[0].text.strip().replace(',', '')
-    except IndexError:
-        activity_elevation_gain = ''
-    return activity_athlete, activity_distance, activity_elevation_gain
 
 
 def parse_athlete_activities_html(html: str):
@@ -111,58 +89,6 @@ def parse_athlete_activities_html(html: str):
         # calories*
 
 
-    # tree = html.fromstring(activity_html.text)
-
-    # last_timestamp = ''
-    # records = list()
-
-    # activities = tree.xpath("//div[@class='activity entity-details feed-entry']")
-    # print("HTML of found activites: {}".format(activities))
-    # print("Number of activities found: {}".format(activities))
-
-    # # single activities
-    # for activity in tree.xpath("//div[@class='activity entity-details feed-entry']"):
-    #     # activitiy time stamp
-    #     activity_timestamp = activity.xpath("./@data-rank")[0]
-    #     # activitiy date
-    #     activity_date = activity.xpath(".//div[@class='entry-head']/time")[0].text.strip()
-    #     activity_date_day, activity_date_time, *_ = activity_date.split(" at ")
-    #     activity_date = human_readable_time_to_machine(activity_date_day)
-    #     # athlete info
-    #     activity_athlete, activity_distance, activity_elevation_gain = parse_athlete_activity_info(activity)
-    #     records.append({
-    #         "athlete_name": activity_athlete,
-    #         "activity_day": activity_date_day,
-    #         "activity_time": activity_date_time,
-    #         "activity_distance": activity_distance,
-    #         "activity_elevation_gain": activity_elevation_gain
-    #     })
-    #     last_timestamp = activity_timestamp
-    
-    # # group activities
-    # for activity in tree.xpath("//div[@class='feed-entry group-activity']"):
-    #     # activitiy time stamp
-    #     activity_timestamp = activity.xpath("./@data-rank")[0]
-    #     # activitiy date
-    #     activity_date = activity.xpath(".//div[@class='entry-head']/time")[0].text.strip()
-    #     activity_date_day, activity_date_time, *_ = activity_date.split(" at ")
-    #     activity_date = human_readable_time_to_machine(activity_date_day)
-    #     for athlete_info in activity.xpath(".//li[@class='entity-details feed-entry']"):
-    #         # athlete info
-    #         activity_athlete, activity_distance, activity_elevation_gain = parse_athlete_activity_info(athlete_info)
-    #         records.append({
-    #             "athlete_name": activity_athlete,
-    #             "activity_day": activity_date_day,
-    #             "activity_time": activity_date_time,
-    #             "activity_distance": activity_distance,
-    #             "activity_elevation_gain": activity_elevation_gain
-    #         })
-    #     if last_timestamp < activity_timestamp:
-    #         last_timestamp = activity_timestamp
-
-    # return last_timestamp, records
-
-
 def validate_inputs(athlete_id: int, month: str, year: str, email: str, password: str) -> (bool, str):
     if not isinstance(athlete_id, int):
         return False, "Athlete ID must be an integer "
@@ -232,16 +158,16 @@ def get_activities_in_month(athlete_id: int, month: str, year: str) -> list[dict
 
     # # TODO: gather corresponding GPX routes for every activity (will require storing of acitivity_id)
 
-    # # close the session
-    # session_requests.close()
-
     # return activities
 
 if __name__ == "__main__":
     # athlete_id = int(input("Athlete ID: "))
     # month = input("Month: ")
     # year = input("Year: ")
-    athlete_id = 55006593
+
+    # This information can be later input upon a single run
+    # for now hard-coded for faster debugging
+    athlete_id = 55006593  # Test user we are working with
     month = "10"
     year = "2020"
     get_activities_in_month(athlete_id, month, year)
