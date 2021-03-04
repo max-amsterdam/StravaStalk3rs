@@ -104,7 +104,7 @@ def validate_inputs(athlete_id: int, month: str, year: str, email: str, password
     return True, ""
 
 
-def get_activities_in_month(athlete_id: int, month: str, year: str) -> list[dict]:
+def get_activities_in_month(month: str, year: str) -> list[dict]:
     """Gather a month's worth of Strava activities for an athlete
 
     This function implements to core scraping techniques to gather the necessary HTML pages,
@@ -114,7 +114,6 @@ def get_activities_in_month(athlete_id: int, month: str, year: str) -> list[dict
     variables 'EMAIL' and 'PASSWORD' must be set.
 
     Args:
-        athlete_id (int): ID of the athlete to gather activities for. This is a Strava construct
         month (str): month in MM format
         year (str): year in YY format
 
@@ -126,8 +125,9 @@ def get_activities_in_month(athlete_id: int, month: str, year: str) -> list[dict
         email = os.environ['EMAIL']
         password = os.environ['PASSWORD']
         chrome_driver_path = os.environ['CHROME_DRIVER_PATH']
+        athlete_id = os.environ['ATHLETE_ID']
     except:
-        print("Failed to get activities: EMAIL, PASSWORD, and CHROME_DRIVER_PATH environmental variables must be set.")
+        print("Failed to get activities: EMAIL, PASSWORD, and CHROME_DRIVER_PATH, ATHLETE_ID environmental variables must be set.")
         return
 
     valid, message = validate_inputs(athlete_id, month, year, email, password)
@@ -167,7 +167,6 @@ if __name__ == "__main__":
 
     # This information can be later input upon a single run
     # for now hard-coded for faster debugging
-    athlete_id = 55006593  # Test user we are working with
     month = "10"
     year = "2020"
-    get_activities_in_month(athlete_id, month, year)
+    get_activities_in_month(month, year)
