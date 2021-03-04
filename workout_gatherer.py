@@ -3,20 +3,30 @@ This file contains the logic for scraping workout data from a given athlete's pr
 """
 from bs4 import BeautifulSoup
 from selenium import webdriver
-import datetime
+from datetime import datetime
+import time
 import os
 import time
 import re
+import json
+
+
+meter_to_miles_conversion_factor = .0006213712
+
+
+def activity_class(css_class):
+    return css_class is not None and "activity" in css_class and "entity-details" in css_class and "feed-entry" in css_class
 
 
 def parse_athlete_activities_html(html: str):
     soup = BeautifulSoup(html, "html.parser")
 
     activities_result = []
-    activities = soup.find_all(attrs={"class": "activity entity-details feed-entry"})
+    activities = soup.find_all(class_=activity_class)
     print(len(activities))
 
     for activity in activities:
+        curr_act_json = {}
         # MANDATORY ATTRIBUTES (all activities should have these: if not, error will occur)
 
         # athlete name
@@ -28,6 +38,7 @@ def parse_athlete_activities_html(html: str):
             athlete_tag = athlete_tag[0]
 
         athlete_name = athlete_tag.string.strip()
+        curr_act_json['athlete_name'] = athlete_name
 
         # timestamp start
         timestamp_tag = activity.find_all("time", attrs={"class": "timestamp"})
@@ -38,6 +49,7 @@ def parse_athlete_activities_html(html: str):
             timestamp_tag = timestamp_tag[0]
 
         timestamp_start = timestamp_tag['datetime']
+        curr_act_json['timestamp_start'] = timestamp_start 
 
         # activity ID
         title_tag = activity.find_all("a", href=re.compile("activities/"), attrs={"class": ""})
@@ -48,13 +60,13 @@ def parse_athlete_activities_html(html: str):
             title_tag = title_tag[0]
 
         activity_id = title_tag['href'].split("/")[2]
+        curr_act_json['activity_id'] = activity_id 
 
         # title
-        title = title_tag.string
-        print("{} completed {} (id {}) at {}".format(athlete_name, title, activity_id, timestamp_start))
+        title = title_tag.string.strip()
+        curr_act_json['title'] = title 
 
         # elapsed time
-
         elapsed_time_tag = activity.find_all("li", attrs={"title": "Time"})
         if len(elapsed_time_tag) > 1:
             print("ERROR: Find call on elapsed time tag returned more than 1 result: {}".format(elapsed_time_tag))
@@ -78,20 +90,93 @@ def parse_athlete_activities_html(html: str):
 
             i += 2
 
-        # type
+        curr_act_json['elapsed_time_minutes'] = round(total_time_seconds / 60.0, 2)
 
-        app_icon_tag = activity.find_all("span", attrs={"class": "app-icon"})
+        # type
+        app_icon_tags = activity.find_all("span", attrs={"class": "app-icon"})
+        app_icon_tag = None
+        for t in app_icon_tags:
+            if len(t.get_text(strip=True)) == 0:
+                app_icon_tag = t
+                break
+
+        if not app_icon_tag:
+            print("ERROR: Loop to find app icon tag did not work. All returned app_icon_tags: {}".format(app_icon_tags))
+            return
+
+        classes = app_icon_tag['class']
+        # we are looking for the workout type via "icon-<type>". We need to ignore "icon-dark" and "icon-lg"
+        activity_type = None
+        for c in classes:
+            if c != "app-icon" and (c != "icon-dark" or c != "icon-light") and (c != "icon-lg" or c != "icon-md" or c != "icon-sm"):
+                # this is the type icon!
+                activity_type = c.split("-")[1]
+                break
+
+        if not activity_type:
+            print("ERROR: unable to find activity type")
+            return
+
+        curr_act_json['activity_type'] = activity_type
 
         # OPTIONAL ATTRIBUTES (not all activities will have these)
         # distance*
+        distance_tag = activity.find_all("li", attrs={"title": "Distance"})
+
+        if len(distance_tag) > 1:
+            print("ERROR: Find call on distance tag returned more than 1 result: {}".format(distance_tag))
+        elif len(distance_tag) == 1:
+            # add distance if it exists, if not, ignore
+            distance_tag = distance_tag[0]
+            children = distance_tag.contents
+            num = float(children[0].strip().replace(',', ''))  # number of miles OR meters
+            unit = children[1]['title']
+
+            curr_act_json["distance"] = {
+                "value": num,
+                "unit": unit
+            }
+
         # pace*
-        # average HR*
-        # calories*
+        pace_tag = activity.find_all("li", attrs={"title": "Pace"})
+        if len(pace_tag) > 1:
+            print("ERROR: Find call on pace tag returned more than 1 result: {}".format(pace_tag))
+        elif len(pace_tag) == 1:
+            # add pace if it exists, if not, ignore
+            pace_tag = pace_tag[0]
+            children = pace_tag.contents
+            pace = children[0].strip()
+            unit = children[1]['title']
+
+            curr_act_json["pace"] = {
+                "value": pace,
+                "unit": unit 
+            }
+
+        # elevation gain*
+        elev_gain_tag = activity.find_all("li", attrs={"title": "Elev Gain"})
+        if len(elev_gain_tag) > 1:
+            print("ERROR: Find call on pace tag returned more than 1 result: {}".format(pace_tag))
+        elif len(elev_gain_tag) == 1:
+            # add elev gain if it exists, if not, ignore
+            elev_gain_tag = elev_gain_tag[0]
+            children = elev_gain_tag.contents
+            num = float(children[0].strip().replace(',', ''))
+            unit = children[1]['title']
+
+            curr_act_json["elevation_gain"] = {
+                "value": num,
+                "unit": unit
+            }
+
+        activities_result.append(curr_act_json)
+
+    return activities_result
 
 
 def validate_inputs(athlete_id: int, month: str, year: str, email: str, password: str) -> (bool, str):
-    if not isinstance(athlete_id, int):
-        return False, "Athlete ID must be an integer "
+    if not isinstance(athlete_id, str):
+        return False, "Athlete ID must be an string"
     if not isinstance(month, str) or len(month) != 2:
         return False, "Month must be a string with length 2. Examples: '01' for January, '11' for November. You supplied: {}".format(athlete_id)
     if not isinstance(year, str) or len(year) != 4:
@@ -154,19 +239,26 @@ def get_activities_in_month(month: str, year: str) -> list[dict]:
     driver.get(url)
     time.sleep(5)  # sleep to allow ajax to fill all the workouts
 
-    activities = parse_athlete_activities_html(driver.page_source)
+    return parse_athlete_activities_html(driver.page_source)
 
-    # # TODO: gather corresponding GPX routes for every activity (will require storing of acitivity_id)
+    # TODO: gather corresponding GPX routes for every activity (will require storing of acitivity_id)
 
-    # return activities
 
 if __name__ == "__main__":
-    # athlete_id = int(input("Athlete ID: "))
-    # month = input("Month: ")
-    # year = input("Year: ")
-
-    # This information can be later input upon a single run
-    # for now hard-coded for faster debugging
-    month = "10"
+    # get activities for every month in 2020
+    months = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+    # months = ["08", "09"]
     year = "2020"
-    get_activities_in_month(month, year)
+    all_activities = []
+    for m in months:
+        curr_activities = get_activities_in_month(m, year)
+        print("Got {} activities from month {}".format(len(curr_activities), m))
+        all_activities.extend(curr_activities)
+    print("Total number of activities: {}".format(len(all_activities)))
+
+    activities_json = {
+        "activities": all_activities
+    }
+
+    f = open("activities_{}.json".format(time.time()), "w")
+    f.write(json.dumps(all_activities, indent=4))
