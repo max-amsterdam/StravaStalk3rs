@@ -18,7 +18,7 @@ def activity_class(css_class):
     return css_class is not None and "activity" in css_class and "entity-details" in css_class and "feed-entry" in css_class
 
 
-def parse_athlete_activities_html(html: str):
+def parse_athlete_activities_html(html: str, athlete_id: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
 
     activities_result = []
@@ -27,18 +27,15 @@ def parse_athlete_activities_html(html: str):
 
     for activity in activities:
         curr_act_json = {}
+        if 'min-view' not in activity['class']:
+            curr_act_json['has_gps'] = True
+        else:
+            curr_act_json['has_gps'] = False
+
         # MANDATORY ATTRIBUTES (all activities should have these: if not, error will occur)
 
-        # athlete name
-        athlete_tag = activity.find_all("a", attrs={"class": "entry-athlete", "href": re.compile("/athletes/*")})
-        if len(athlete_tag) > 1:
-            print("ERROR: Find call on athlete tag returned more than 1 result: {}".format(athlete_tag))
-            return
-        else:
-            athlete_tag = athlete_tag[0]
-
-        athlete_name = athlete_tag.string.strip()
-        curr_act_json['athlete_name'] = athlete_name
+        # athlete id
+        curr_act_json['athlete_id'] = athlete_id
 
         # timestamp start
         timestamp_tag = activity.find_all("time", attrs={"class": "timestamp"})
@@ -174,13 +171,11 @@ def parse_athlete_activities_html(html: str):
     return activities_result
 
 
-def validate_inputs(athlete_id: int, month: str, year: str, email: str, password: str) -> (bool, str):
+def validate_inputs(athlete_id: int, month: str, email: str, password: str) -> (bool, str):
     if not isinstance(athlete_id, str):
         return False, "Athlete ID must be an string"
-    if not isinstance(month, str) or len(month) != 2:
-        return False, "Month must be a string with length 2. Examples: '01' for January, '11' for November. You supplied: {}".format(athlete_id)
-    if not isinstance(year, str) or len(year) != 4:
-        return False, "Year must be a string with length 4. Examples: '2021' for 2021, '1998' for 1998. You supplied: {}".format(year)
+    if not isinstance(month, str) or len(month) != 6:
+        return False, "Month must be a string with length 6. Examples: '202001' for January 2020, '199811' for November 1998. You supplied: {}".format(athlete_id)
     if not isinstance(email, str) or '@' not in email:
         return False, "Email must be a string in email format. Examples 'test@gmail.com'. You supplied: {}".format(email)
     if not isinstance(password, str) or len(password) == 0:
@@ -189,7 +184,7 @@ def validate_inputs(athlete_id: int, month: str, year: str, email: str, password
     return True, ""
 
 
-def get_activities_in_month(month: str, year: str) -> list[dict]:
+def get_activities_in_month(months: list[str]) -> list[dict]:
     """Gather a month's worth of Strava activities for an athlete
 
     This function implements to core scraping techniques to gather the necessary HTML pages,
@@ -199,8 +194,7 @@ def get_activities_in_month(month: str, year: str) -> list[dict]:
     variables 'EMAIL' and 'PASSWORD' must be set.
 
     Args:
-        month (str): month in MM format
-        year (str): year in YY format
+        months (list[str]): list of months in YYYYMM format
 
     Returns:
         List(Dict): A list of workout objects
@@ -215,9 +209,7 @@ def get_activities_in_month(month: str, year: str) -> list[dict]:
         print("Failed to get activities: EMAIL, PASSWORD, and CHROME_DRIVER_PATH, ATHLETE_ID environmental variables must be set.")
         return
 
-    valid, message = validate_inputs(athlete_id, month, year, email, password)
-    if not valid:
-        print("Cannot get activities, invalid input: {}".format(message))
+    all_activities = []
 
     # get driver
     options = webdriver.ChromeOptions()
@@ -233,32 +225,55 @@ def get_activities_in_month(month: str, year: str) -> list[dict]:
     driver.find_element_by_id('password').send_keys(password)
     driver.find_element_by_id('login-button').click()
 
-    # get the webpage of activities for the requested month
-    url = f'https://www.strava.com/athletes/{athlete_id}#interval?interval={year}{month}&interval_type=month&chart_type=hours&year_offset=0'
-    print("Sending request on url: {}".format(url))
-    driver.get(url)
-    time.sleep(5)  # sleep to allow ajax to fill all the workouts
+    for month in months:
+        valid, message = validate_inputs(athlete_id, month, email, password)
+        if not valid:
+            print("Cannot get activities, invalid input: {}".format(message))
 
-    return parse_athlete_activities_html(driver.page_source)
+        # get the webpage of activities for the requested month
+        url = f'https://www.strava.com/athletes/{athlete_id}#interval?interval={month}&interval_type=month&chart_type=hours&year_offset=0'
+        print("Sending request on url: {}".format(url))
+        driver.get(url)
+        time.sleep(5)  # sleep to allow ajax to fill all the workouts and comply with terms of service
 
-    # TODO: gather corresponding GPX routes for every activity (will require storing of acitivity_id)
+        all_activities.extend(parse_athlete_activities_html(driver.page_source, athlete_id))
 
+    # at this point, have all required activities. Now, we want to get the GPS data for every activity
+    # that has GPS data attached to it.
+    for a in all_activities:
+        if a['has_gps']:
+            activity_id = a['activity_id']
 
-if __name__ == "__main__":
-    # get activities for every month in 2020
-    months = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
-    # months = ["08", "09"]
-    year = "2020"
-    all_activities = []
-    for m in months:
-        curr_activities = get_activities_in_month(m, year)
-        print("Got {} activities from month {}".format(len(curr_activities), m))
-        all_activities.extend(curr_activities)
-    print("Total number of activities: {}".format(len(all_activities)))
+            url = f'https://www.strava.com/activities/{activity_id}/route'
 
-    activities_json = {
+            print("Sending request on url: {}".format(url))
+            driver.get(url)
+            time.sleep(5)  # Again, sleeping here to allow the page to load, and comply with terms of service (only 1 web request per 5 seconds)
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            script_json = soup.find_all(attrs={"id": "__NEXT_DATA__", "type": "application/json"})
+
+            json_contents = json.loads(script_json[0].contents[0])
+
+            activity_stream = json_contents.get("props").get("pageProps").get("activityStream")
+
+            a['activity_stream'] = activity_stream
+
+    result_json = {
+        "timestamp_generated": datetime.utcnow().isoformat(),
+        "months_included": months,
         "activities": all_activities
     }
 
-    f = open("activities_{}.json".format(time.time()), "w")
-    f.write(json.dumps(all_activities, indent=4))
+    f = open("./result.json", "w")
+    f.write(json.dumps(result_json, indent=4))
+    f.close()
+
+    return result_json
+
+
+if __name__ == "__main__":
+    # get activities for every month in 2020 and first 3 months of 2021
+    months = ["202001", "202002", "202003", "202004", "202005", "202006", "202007", 
+              "202008", "202009", "202010", "202011", "202012", "202101", "202102", "202103"]
+
+    get_activities_in_month(months)
